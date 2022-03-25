@@ -1,0 +1,25 @@
+Package: guesswho
+Type: Package
+Title: Match Pedigree IDs to Field IDs
+Version: 0.1.2
+Date: 2022-03-17
+Authors@R: person("Jisca", "Huisman", email = "jisca.huisman@gmail.com",
+    role = c("aut", "cre"))
+Description: This R package compares a genetic pedigree to field-observed 
+    candidate parents. It replaces dummy IDs and IDs of 'mystery samples' by 
+    field-IDs of non-genotyped individuals where possible, and flags cases 
+    where the most-likely 'field parent' differs from the pedigree parent.
+License: GPL-2
+LazyData: true
+Imports:
+    plyr (>= 1.8.0),
+    abind,
+    stats,
+    utils,
+    graphics
+RoxygenNote: 7.1.2
+Suggests: 
+    knitr,
+    rmarkdown
+VignetteBuilder: knitr
+NeedsCompilation: no

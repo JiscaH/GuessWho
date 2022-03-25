@@ -1,0 +1,200 @@
+\documentclass[a4paper, 12pt]{article}
+\usepackage{amssymb,amsmath,graphicx, multirow} %, caption}
+\usepackage[margin=1in]{geometry}
+\usepackage[section]{placeins}
+
+\begin{document}
+
+% \VignetteIndexEntry{Using GuessWho}
+
+\title{\vspace{-1cm}GuessWho: Match pedigree IDs to field IDs}
+\author{\vspace{-1em}Jisca Huisman ( jisca.huisman @ gmail.com )}
+\date{\small\today}
+
+\maketitle
+
+\section{What it does}
+This R package compares a genetic pedigree, e.g. inferred using \emph{sequoia}, to field-observed candidate parents. It replaces dummy IDs and IDs of 'mystery samples' by field-IDs of non-genotyped individuals where possible, and flags cases where the most-likely 'field parent' differs from the genotyped parent in the pedigree. It flags mothers in the pedigree that are not known from field observations, and checks throughout for consistency of birth years, death years, and population-specific ages of first and last reproduction.
+
+This will increase the number of individuals with both field and pedigree data, help identify assignment errors in the pedigree, and help identify sample labeling issues and cases of mistaken identity in the field.
+
+
+\section{Rationale}
+For each individual in the genetic pedigree, there are various sources of information regarding its identity that may or may not be present:
+\begin{itemize}
+	\item sample label
+	\item sex
+	\item year of birth and death, both of itself and of its genetically assigned parents and offspring
+	\item genetic mother, and her field-observed offspring
+	\item genetic offspring, and their field-observed (candidate) parents
+\end{itemize}
+
+For most genotyped individuals, the field identity is known and this sample label does not conflict with any of the other sources of information. However, for some individuals in the pedigree the field identity is unknown or uncertain.
+
+\emph{Dummy individuals} lack a sample label and an own birth and death year, but do have a known sex and genetic offspring, often with known birth years and one or more candidate parents. Some have a genetically assigned mother, which further limits the number of potentially matching field identities.
+
+\emph{Mystery samples} are taken from un-identified individuals in the field, or the sample label has been lost. The available information is highly variable.
+
+
+
+\section{How}
+We create five matrices, each corresponding to an information source, and each with dimensions $N_{ped}$ by $N_{field} +1$, the number of unique individuals in the pedigree (including dummies and mystery samples) by the the number of unique field-observed individuals plus one. The addition is for \emph{INVIS}, a symbolic non-observed (`invisible') individual.
+
+Instead of using rather arbitrary prior probabilities and weighing factors to combine the different sources of information when they lack or disagree, we use a categorical approach, as shown in the tables (see also \verb+?MkIDcat+).
+
+The only use of probabilities is to select among the potentially many candidate sires for paternal half-sib groups (both those sharing a dummy father and those sharing a genotyped father). These probabilities are transformed into categories (Section `Offspring: Categorical', function \verb+MkOffCat+) before being combined with the other four sources of information into a consensus judgement (Table `Combine', function \verb+MatchPedField+).
+
+\subsection{Label}
+
+\begin{table}[htbp]
+\caption{Label}
+	\centering
+		\begin{tabular}{l|ccc}
+			\hline
+			$i$ & SNPd, $j=i$ & SNPd, $j\neq i$ & non-SNPd \\
+			\hline
+			SNPd, real & Match & MismatchSNPd & MismatchNotSNPd \\
+			SNPd, mystery & -- & MismatchNotSNPd & NotSNPd \\
+			Dummy & -- & MismatchNotSNPd & NotSNPd \\
+			\hline
+		\end{tabular}
+\end{table}
+
+A distinction is made between mismatches where both individuals are SNP genotyped, which typically indicates some labelling issue or sample swap, and 'MismatchNotSNPd'  were the pedigree individual is a dummy or mystery ID (i.e., not among {\bfseries FieldIDs}), or the field individual is not (knowingly, intentionally) SNP genotyped.
+
+\subsection{Sex}
+\begin{table}[htbp]
+\caption{Sex}
+	\centering
+		\begin{tabular}{l|ccc}
+			\hline
+			 & Female & Male & Unknown \\
+			\hline
+			Female & Match & Mismatch & Unknown \\
+			Male & Mismatch & Match & Unknown \\
+			Unknown & Unknown & Unknown & Unknown \\
+			\hline
+		\end{tabular}
+\end{table}
+
+
+\subsection{Years}
+Pedigree ID $i$ and field ID $j$ are considered a \emph{Match} if:
+\begin{itemize}
+	\item pedigree-derived minimum birth year $i$ $\leq$ birth year $j$
+	\item pedigree-derived maximum birth year $i$ $\geq$ birth year $j$
+	\item Birth year of oldest genetic offspring of $i$ $\geq$ birth year $j$ $+$ population minimum age of first reproduction
+	\item Birth year of youngest genetic offspring of $i$ $\leq$ last possible year of reproduction for $j$
+\end{itemize}
+
+Where the pedigree-derived minimum and maximum birth year are the individual's own birth year where known, and based on the birth years, death years of any genetic offspring and parents in combination with population-specific ages of first and last reproduction otherwise (arguments {\bfseries AgeFirstRepro, AgeLastRepro}, function \verb+CheckBirthYears+).
+
+A field individual's last possible year of reproduction is based on its year and month of death where known, and is otherwise birth year $+$ population maximum age of last reproduction. The former accounts for the fact that a male's offspring may be born after his death, depending on the month of death ({\bfseries MonthLastRepro, YearLastRepro}), see \verb+?CalcFirstLastRepro+ for details.
+
+
+\subsection{Mother}
+It is assumed that mothers are known with high accuracy, and that for nearly all mothers all offspring are known (supplied as {\bfseries FieldDams}). Then, the pedigree mother of a dummy or mystery ID provides a strong clue about it's field ID.
+
+\begin{table}[htbp]
+\caption{Mother}
+	\centering
+		\begin{tabular}{l|cccc}
+			\hline
+			dam & same mum & different SNPd mum & (different) non-SNPd mum & none \\
+			\hline
+			real & Match & Mismatch & Mismatch & NewMum \\
+			dummy & -- & Mismatch* & Unknown & NewMum \\
+			mystery & -- & Mismatch* & Unknown & NewMum \\
+			none & -- & Mismatch* & Unverified & None \\
+			\hline
+			\multicolumn{5}{l}{\parbox{\textwidth}{*: 'Mismatch' if both individual and field mum are SNP genotyped (false non-assignment rate is negligible), 'Unverified' otherwise.}} \\
+		\end{tabular}
+\end{table}
+
+\subsection{Offspring}
+It is assumed some trait that is associated with the probability of parentage has been measured for a large number of SNPd offspring -- SNPd candidate parent pairs (in Rum red deer: for field mothers carer for young/not ({\bfseries MumProbs}), and for candidate fathers the number of days the mother was in his harem during an 11-day window around conception). This probability can then be predicted for all offspring -- candidate parent pairs after fitting a binomial GLM with parent/not as response variable, and the trait(s) as explanatory variable ({\bfseries DadMod}; for Rum red deer: \verb+DaysHeld_to_Prob+).
+
+For single offspring -- candidate parent pairs these predicted probabilities will be imprecise, but for large genetic sibships it can be possible to assign or exclude candidate parents with high accuracy, as (it is assumed that) the candidate parent is either the parent of all siblings in the cluster, or of none. Moreover, a candidate parent can only be the true parent of at most one sibship.
+
+\paragraph{probabilities per pedigree parent}
+This is implemented by for each genetic sibship (both with genotyped and with dummy parents) determining the parentage probability for all offspring -- candidate parent pairs, including all candidate parents of at least one offspring in the sibship and the symbolic un-observed candidate parent 'INVIS' (\verb+Init.candpar+). Then the probabilities for each candidate parent are multiplied across all siblings (\verb+ParentOfAll+). As the invisible parent on which the trait could have been observed may differ between the siblings, a correction factor is applied:
+
+\begin{equation*}
+	P(\text{INVIS}) = P'(\text{INVIS}) \times \left(\frac{1}{n_I}\right)^{n_O} \times n_I
+\end{equation*}
+
+where $n_I$ is the estimated 'typical' number of invisible candidate parents ({\bfseries nInvis}, and $n_O$ is the number of offspring in the sibship.
+
+\paragraph{Filtering}
+These probability products then are the probabilities $P_{i,j}$ that pedigree parent $i$ is field candidate parent $j$. Highly unlikely candidates are filtered out by iteratively matching the most convincing $i$ -- $j$ pairs, and disallowing all other candidates for that $i$, and all other genetic sibships for that $j$ (\verb+FilterCand+, detailed description of algorithm in Appendix).
+
+\paragraph{Categorical}
+For each $i$, the probabilities of the remaining candidate parents are then transformed into a categorical variable, by comparison to each other and to a reference level (\verb+MkOffCat+). A match is considered 'Conclusive' if $P_{i,j} > P_{i, \text{REF}}$, and $P_{i,j}$ is larger than the second-largest value of $P_{i,J}$ by a margin $T_r$, where $r$ is the iteration number of \verb+MatchIDsPedigreeField+ and $T=(5,3,2,2,\ldots)$ (on log10 scale). The reference probability ($P_{i, \text{REF}}$, {\bfseries Lref}) ensures that no assignment is made if none of the candidate parents are very likely, and is a function of the number of offspring of $i$ only.
+
+
+\subsection{Combine}
+For each pedigree ID $i$ a shortlist is made of all field-ID's $j$ that a) match label, b) match mother, and/or c) are non-excluded as parent. For these shortlisted ID's, a consensus judgement is made (\verb+MatchPedField+).
+
+Table YY shows the consensus levels for all combinations of \emph{Label}, \emph{Mother}, and \emph{Offspring}, for \emph{Sex} 'Match' and \emph{Years} 'Match'. For explanations of the various levels, see \verb+?init.PedFieldMatch+.
+
+\begin{table}[tbp]
+\caption{Combine}
+	\centering  \footnotesize
+		\begin{tabular}{ll|ccccc}
+			\hline
+Label & Mother & \multicolumn{5}{c}{Offspring}  \\
+ &  & Conclusive & Inconclusive & Inferior & Invisible & None \\
+\hline
+Match & Match & OK & OK & MERGE? & OK & OK \\
+Match & Mismatch & CHECKMUM & CHECKMUM & MERGE? & CHECKMUM & CHECKMUM \\
+Match & NewMum & CHECKMUM & CHECKMUM & MERGE? & CHECKMUM & CHECKMUM \\
+Match & Unverified & LIKELY & LIKELY & MERGE? & LIKELY & LIKELY \\
+Match & Unknown & OK & OK & MERGE? & OK & OK \\
+Match & None & OK & OK & MERGE? & OK & OK \\
+& & & & & & \\
+Mismatch* & ** & MERGE? & X & X & X & X \\
+& & & & & & \\
+NotSNPd & Match & OK & MAYBE & X & MAYBE & MAYBE \\
+NotSNPd & Mismatch & CHECKMUM & X & X & X & X \\
+NotSNPd & NewMum & CHECKMUM & ??? & X & ??? & ??? \\
+NotSNPd & Unverified & LIKELY & ??? & X & ??? & ??? \\
+NotSNPd & Unknown & LIKELY & ??? & X & ??? & ??? \\
+NotSNPd & None & OK & ??? & X & ??? & ??? \\
+\hline
+\multicolumn{7}{l}{*\phantom{*}: both MismatchSNPd and MismatchNotSNPd} \\
+\multicolumn{7}{l}{**: all levels} \\
+		\end{tabular}
+\end{table}
+
+
+All matches $i$, $j$ with consensus level 'OK' are accepted, as well as 'LIKELY' in the second and subsequent iterations (and warnings raised about any mismatches, see \verb+?MatchIDsPedigreeField+).
+
+Dummy and mystery IDs in the pedigrees are replaced by their accepted match, and in the next iteration all checking and matching is conditional upon those replacement IDs. This includes predicted probabilities for candidate parents of the newly-replaced ID.
+
+%\clearpage
+\section*{Appendix: algorithm to filter candidate parents}
+
+\verb+FilterCand+ implements the following algorithm:
+
+\begin{itemize}
+	\item Set the matched candidate parent to 'INVIS' for all $i$ (\verb+GOM[i,INVIS]=1+), and allow all $j$ (\verb+M.allow[,]=1+)
+	\item For each threshold $T_s$ in \verb+LL.th+,
+		\begin{itemize}
+		\item Calculate difference $d_i$ between $\max(P_{i,J_i})$ and second largest $P_{i,\#}$ for all $i$, where $J_i$ are all allowed $j$'s.
+		\item Order pedigree parents by decreasing $d_i$ (i.e. from most convincing to least convincing evidence)
+		\item For each $i$,
+		\begin{itemize}
+			\item re-calculate $d_i$, in case the list of allowed $j$'s $J_i$ has changed
+			\item if $d_i \geq T_s$, the threshold in round $s$, continue
+			\item determine the most likely candidate parent $j$, as the location of $\max(P_{i,J_i})$
+			\item if $j$ is not 'INVIS' or another 'NonUnique' level, continue
+			\item calculate $a_x = P_{x,J} - \max(P_{x,-j}$) for most-likely parent $j$ and all allowed pedigree parents $x$ in $X_j$
+			\item if $a_i - \max(a_{-i}) \geq 3T_s$, i.e. if for the most-likely candidate parent $j$ this pedigree sibship $i$ is far more likely than any other allowed pedigree sibship, continue
+			\item declare a match for pair $i, j$ (\verb+GOM[i,j]<-1, GOM[i,-j]<-0+) and disallow all other matches for $i$ and $j$ (\verb+M.allow[i, -j]<-NA+, \verb+M.allow[-i, j]<-NA+)
+		\end{itemize}
+		\item Calculate total log10-likelihood, as the sum of log10-probabilities across all matched $i$, $j$ ($j$= INVIS for non-matched sibships)
+	\end{itemize}
+\end{itemize}
+
+
+\end{document}
